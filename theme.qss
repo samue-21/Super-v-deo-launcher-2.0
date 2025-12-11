@@ -1,0 +1,7 @@
+/* theme.qss — Minimal Clean */
+QWidget { background: #f7f7f8; color: #202124; font-family: Segoe UI, Arial; }
+QPushButton { background: #ffffff; border: 1px solid #dcdcdc; padding: 8px; border-radius: 8px; }
+QPushButton:hover { background: #f0f0f0; }
+QListWidget { background: #ffffff; border: 1px solid #e9e9e9; border-radius: 8px; padding: 6px; }
+QComboBox, QCheckBox { padding: 6px; }
+QLabel { margin-top: 8px; margin-bottom: 4px; font-weight: 500; }
