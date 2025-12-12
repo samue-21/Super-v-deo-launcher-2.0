@@ -1,3 +1,4 @@
+# player.py (versão com Dock recolhível/desacoplável) + botão "Sair Tela Cheia" no canto superior direito (modo janela)
 import sys
 import os
 import json
@@ -9,77 +10,60 @@ import platform
 from pathlib import Path
 
 from PyQt6.QtWidgets import (
-    QWidget, QPushButton, QVBoxLayout, QFileDialog,
+    QMainWindow, QWidget, QPushButton, QVBoxLayout, QFileDialog,
     QMessageBox, QHBoxLayout, QMenuBar, QApplication, QSplashScreen,
-    QSlider, QLabel, QLineEdit, QDialog, QDialogButtonBox
+    QSlider, QLabel, QLineEdit, QDialog, QDialogButtonBox,
+    QDockWidget, QListWidget, QAbstractItemView, QListWidgetItem
 )
+
 from PyQt6.QtGui import (
-    QIcon, QPixmap, QPainter, QColor, QPolygon, QAction, QKeySequence
+    QIcon, QPixmap, QPainter, QColor, QPolygon,
+    QKeySequence, QAction
 )
+
 from PyQt6.QtCore import (
     QUrl, Qt, QTimer, QPoint
 )
+
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 
-# ============================================================
-# 🔐 SISTEMA DE LICENÇA LOCAL
-# ============================================================
-
-SECRET = b"TROQUE-Essa-SECRET-ANTES-DE-DISTRIBUIR"  # ❗ ALTERE ESTA SECRET ANTES DE PUBLICAR!
+# --- (licensing utilities same as before) ---
+SECRET = b"TROQUE-Essa-SECRET-ANTES-DE-DISTRIBUIR"
 LICENSE_DIR = Path.home() / ".superplayer"
 LICENSE_FILE = LICENSE_DIR / "license.json"
 
-
 def machine_id():
-    """Gera uma impressão única da máquina baseada no MAC + hostname."""
     try:
         mac = uuid.getnode()
     except:
         mac = 0
-
     node = platform.node() or ""
     raw = f"{mac}-{node}".encode()
-
     return hashlib.sha256(raw).hexdigest()
-
 
 def make_hmac(payload_bytes):
     return hmac.new(SECRET, payload_bytes, hashlib.sha256).hexdigest()
 
-
 def parse_license_key(key: str):
-    """Verifica formato, assinatura e decodifica a licença."""
     try:
         if not key.startswith("PLR-"):
             return None
-
         _, payload_hex, sig = key.split("-", 2)
         payload = bytes.fromhex(payload_hex)
         expected_sig = make_hmac(payload)
-
         if not hmac.compare_digest(expected_sig, sig):
             return None
-
         user, expiry, machine = payload.decode().split("|")
         return {"user": user, "expiry": int(expiry), "machine": machine}
-
     except:
         return None
 
-
 def save_license_locally(key, parsed):
     LICENSE_DIR.mkdir(parents=True, exist_ok=True)
-    data = {
-        "key": key,
-        "user": parsed["user"],
-        "expiry": parsed["expiry"],
-        "machine": parsed["machine"],
-        "saved_at": int(time.time()),
-    }
+    data = {"key": key, "user": parsed["user"], "expiry": parsed["expiry"], "machine": parsed["machine"], "saved_at": int(time.time())}
     with open(LICENSE_FILE, "w") as f:
         json.dump(data, f, indent=2)
-
 
 def load_local_license():
     if not LICENSE_FILE.exists():
@@ -90,55 +74,35 @@ def load_local_license():
     except:
         return None
 
-
 def validate_local_license():
-    """Verifica licença salva localmente: assinatura, expiração e máquina."""
     rec = load_local_license()
     if not rec:
-        return False, "no_license"
-
+        return False, None
     parsed = parse_license_key(rec["key"])
     if not parsed:
-        return False, "invalid_key"
-
+        return False, None
     if parsed["expiry"] < time.time():
-        return False, "expired"
-
-    if parsed["machine"]:
-        if parsed["machine"] != machine_id():
-            return False, "wrong_machine"
-
+        return False, None
+    if parsed["machine"] and parsed["machine"] != machine_id():
+        return False, None
     return True, parsed
 
-
 # ============================================================
-# COMPONENTES DO PLAYER
-# ============================================================
-
 def generate_icon_pixmap(size=256):
     pm = QPixmap(size, size)
     pm.fill(QColor("#f7f7f8"))
     painter = QPainter(pm)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
     painter.setBrush(QColor("#2f2f2f"))
     painter.setPen(Qt.PenStyle.NoPen)
     painter.drawRoundedRect(0, 0, size, size, 24, 24)
-
     painter.setBrush(QColor("#ffffff"))
     margin = int(size * 0.22)
-
-    points = [
-        (margin, margin),
-        (size - margin, size // 2),
-        (margin, size - margin)
-    ]
+    points = [(margin, margin), (size - margin, size // 2), (margin, size - margin)]
     polygon = QPolygon([QPoint(p[0], p[1]) for p in points])
     painter.drawPolygon(polygon)
-
     painter.end()
     return pm
-
 
 def show_splash(app):
     splash_pix = generate_icon_pixmap(256)
@@ -147,204 +111,172 @@ def show_splash(app):
     QTimer.singleShot(700, splash.close)
     return splash
 
-
-# ============================================================
-# JANELA EXTERNA FULLSCREEN
-# ============================================================
 class VideoWindow(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
-
         self.video_widget = QVideoWidget(self)
-
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(0,0,0,0)
         layout.addWidget(self.video_widget)
-
     def show_on_screen(self, screen):
         geo = screen.geometry()
         self.setGeometry(geo)
         self.showFullScreen()
 
-
 # ============================================================
-# JANELA PRINCIPAL
-# ============================================================
-class SuperPlayer(QWidget):
+class SuperPlayer(QMainWindow):
     def __init__(self):
         super().__init__()
-
         ok, info = validate_local_license()
         self.is_licensed = ok
         self.license_info = info if ok else None
 
         self.setWindowTitle("Super Player")
-        self.setGeometry(200, 200, 760, 560)
+        self.setGeometry(200,200,1000,640)
+        self.setWindowIcon(QIcon(generate_icon_pixmap(256)))
 
-        pix = generate_icon_pixmap(256)
-        self.setWindowIcon(QIcon(pix))
-
-        # PLAYER
+        # core player
         self.player = QMediaPlayer()
         self.audio_output = QAudioOutput()
         self.player.setAudioOutput(self.audio_output)
         self.video_widget = QVideoWidget()
         self.player.setVideoOutput(self.video_widget)
 
-        # JANELA EXTERNA
+        # playlist data + signal
+        self.playlist = []
+        self.current_index = 0
+        self.player.mediaStatusChanged.connect(self.check_end_of_video)
+
+        # external fullscreen window
         self.external_window = VideoWindow()
 
-        # MENU
-        self.menu_bar = QMenuBar(self)
-        file_menu = self.menu_bar.addMenu("Arquivo")
+        # menu
+        menu = self.menuBar()
+        file_menu = menu.addMenu("Arquivo")
+        act_open = QAction("Abrir vídeo...", self); act_open.triggered.connect(self.open_file); file_menu.addAction(act_open)
+        act_license = QAction("Ativar licença...", self); act_license.triggered.connect(self.activate_license); file_menu.addAction(act_license)
+        act_machine = QAction("Mostrar Machine ID", self); act_machine.triggered.connect(self.show_machine); file_menu.addAction(act_machine)
+        act_close = QAction("Fechar Player", self); act_close.triggered.connect(self.close); file_menu.addAction(act_close)
 
-        act_open = QAction("Abrir vídeo...", self)
-        act_open.triggered.connect(self.open_file)
-        file_menu.addAction(act_open)
+        playlist_menu = menu.addMenu("Lista Reprodução")
+        a_add = QAction("Adicionar vídeo à lista", self); a_add.triggered.connect(self.add_video_to_playlist); playlist_menu.addAction(a_add)
+        a_play = QAction("Reproduzir Lista", self); a_play.triggered.connect(self.play_playlist); playlist_menu.addAction(a_play)
+        a_clear = QAction("Limpar lista", self); a_clear.triggered.connect(self.clear_playlist); playlist_menu.addAction(a_clear)
 
-        act_license = QAction("Ativar licença...", self)
-        act_license.triggered.connect(self.activate_license)
-        file_menu.addAction(act_license)
+        # central widget
+        central = QWidget()
+        cl = QVBoxLayout(central)
+        cl.setContentsMargins(6,6,6,6)
+        cl.addWidget(self.video_widget)
 
-        act_machine = QAction("Mostrar Machine ID", self)
-        act_machine.triggered.connect(self.show_machine)
-        file_menu.addAction(act_machine)
-
-        act_close = QAction("Fechar Player", self)
-        act_close.triggered.connect(self.close)
-        file_menu.addAction(act_close)
-
-        # LAYOUT PRINCIPAL
-        layout = QVBoxLayout()
-        layout.setMenuBar(self.menu_bar)
-        layout.addWidget(self.video_widget)
-
-        # SLIDER
+        # slider
         self.slider = QSlider(Qt.Orientation.Horizontal)
-        self.slider.setRange(0, 0)
+        self.slider.setRange(0,0)
         self.slider.sliderMoved.connect(self.set_position)
-        layout.addWidget(self.slider)
-
+        cl.addWidget(self.slider)
         self.player.positionChanged.connect(self.update_position)
         self.player.durationChanged.connect(self.update_duration)
 
-        # CONTROLES
-        controls = QHBoxLayout()
+        # controls: prev, play, stop, next, external fullscreen, toggle dock
+        ctrl = QHBoxLayout()
+        self.btn_prev = QPushButton("⏮️ Anterior"); self.btn_prev.clicked.connect(self.play_previous); ctrl.addWidget(self.btn_prev)
+        self.btn_play = QPushButton("⏯️ Reprodução"); self.btn_play.clicked.connect(self.toggle_play); ctrl.addWidget(self.btn_play)
+        self.btn_stop = QPushButton("⏹️ Parar"); self.btn_stop.clicked.connect(self.stop_video); ctrl.addWidget(self.btn_stop)
+        self.btn_next = QPushButton("⏭️ Próximo"); self.btn_next.clicked.connect(self.play_next); ctrl.addWidget(self.btn_next)
+        self.btn_external = QPushButton("▶ Fullscreen (monitor)"); self.btn_external.clicked.connect(lambda: self.play_fullscreen_on_monitor(1)); ctrl.addWidget(self.btn_external)
 
-        self.btn_play = QPushButton("⏯️ Reprodução")
-        self.btn_play.clicked.connect(self.toggle_play)
-        controls.addWidget(self.btn_play)
+        self.btn_toggle_dock = QPushButton("📑 Playlist")
+        self.btn_toggle_dock.setCheckable(True)
+        self.btn_toggle_dock.clicked.connect(self.toggle_playlist_dock)
+        ctrl.addWidget(self.btn_toggle_dock)
 
-        self.btn_stop = QPushButton("⏹️ Parar")
-        self.btn_stop.clicked.connect(self.stop_video)
-        controls.addWidget(self.btn_stop)
+        cl.addLayout(ctrl)
+        self.setCentralWidget(central)
 
-        self.btn_exit = QPushButton("⛔ Sair Tela Cheia")
-        self.btn_exit.clicked.connect(self.exit_fullscreen)
-        controls.addWidget(self.btn_exit)
+        # ---------------------------
+        # BOTÃO: Sair Tela Cheia (CANTO SUPERIOR DIREITO - modo janela)
+        # ---------------------------
+        self.btn_exit_corner = QPushButton("⛔ Sair Tela Cheia", self)
+        self.btn_exit_corner.setFixedSize(140, 32)
+        self.btn_exit_corner.setStyleSheet("""
+            QPushButton {
+                background-color: #c62828;
+                color: white;
+                font-weight: bold;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #ff5252;
+            }
+        """)
+        # IMPORTANT: button calls a method that only affects the main window fullscreen
+        self.btn_exit_corner.clicked.connect(self.exit_fullscreen)
+        # show the button in window mode; if you prefer hidden by default use hide()
+        self.btn_exit_corner.show()
 
-        layout.addLayout(controls)
+        # Dock widget (recolhível, movível, flutuante)
+        self.playlist_dock = QDockWidget("Lista de Reprodução", self)
+        self.playlist_dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
+        # permitimos fechar, mover e flutuar
+        self.playlist_dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetClosable | QDockWidget.DockWidgetFeature.DockWidgetMovable | QDockWidget.DockWidgetFeature.DockWidgetFloatable)
 
-        self.control_widgets = [self.btn_play, self.btn_stop, self.btn_exit]
+        self.playlist_widget = QListWidget()
+        self.playlist_widget.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        self.playlist_widget.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.playlist_widget.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.playlist_widget.setAlternatingRowColors(True)
+        self.playlist_widget.itemDoubleClicked.connect(self.on_playlist_double_click)
 
+        # sincroniza ordem quando o dock muda para flutuante ou quando itens movidos
+        self.playlist_dock.topLevelChanged.connect(self.on_dock_top_level_changed)
+        # model signals for reorder
+        try:
+            self.playlist_widget.model().rowsMoved.connect(self.sync_playlist_from_widget)
+        except Exception:
+            self.playlist_widget.model().rowsInserted.connect(self.sync_playlist_from_widget)
+            self.playlist_widget.model().rowsRemoved.connect(self.sync_playlist_from_widget)
+
+        self.playlist_dock.setWidget(self.playlist_widget)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.playlist_dock)
+        self.playlist_dock.hide()
+        self.btn_toggle_dock.setChecked(False)
+
+        # shortcuts and monitors
         self.create_monitor_shortcuts()
         self.add_shortcuts()
 
-        self.setLayout(layout)
-
         self.update_license_label()
 
-    # ============================================================
-    #AÇÃO: JANELA PROFISSIONAL DE ATIVAÇÃO DE LICENÇA
-    # ============================================================
+    # --- license UI / actions (unchanged) ---
     def activate_license(self):
-
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Ativar Licença")
-        dlg.setFixedSize(480, 260)
-
+        dlg = QDialog(self); dlg.setWindowTitle("Ativar Licença"); dlg.setFixedSize(480,260)
         layout = QVBoxLayout(dlg)
-
-        # TÍTULO
-        title = QLabel("<b>Cole sua chave de licença abaixo:</b>")
-        layout.addWidget(title)
-
-        # MACHINE ID + BOTÃO COPIAR
+        layout.addWidget(QLabel("<b>Cole sua chave de licença abaixo:</b>"))
         mid_layout = QHBoxLayout()
-
-        self.mid_label = QLabel(machine_id())
-        self.mid_label.setStyleSheet("color:#00aaff; font-weight:bold;")
-        self.mid_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        mid_layout.addWidget(QLabel("Machine ID:"))
-        mid_layout.addWidget(self.mid_label)
-
-        # botão de copiar
-        copy_btn = QPushButton("Copiar")
-        copy_btn.clicked.connect(lambda: QApplication.clipboard().setText(self.mid_label.text()))
-        mid_layout.addWidget(copy_btn)
-
+        self.mid_label = QLabel(machine_id()); self.mid_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        mid_layout.addWidget(QLabel("Machine ID:")); mid_layout.addWidget(self.mid_label)
+        copy_btn = QPushButton("Copiar"); copy_btn.clicked.connect(lambda: QApplication.clipboard().setText(self.mid_label.text())); mid_layout.addWidget(copy_btn)
         layout.addLayout(mid_layout)
-
-        # instrução
         layout.addWidget(QLabel("<small>Envie este Machine ID para o suporte gerar sua licença.</small>"))
-
-        # INPUT DA LICENÇA
-        self.input_key = QLineEdit()
-        self.input_key.setPlaceholderText("Cole sua chave de licença aqui...")
-        layout.addWidget(self.input_key)
-
-        # BOTÕES OK/CANCEL
-        buttons = (
-            QDialogButtonBox.StandardButton.Ok |
-            QDialogButtonBox.StandardButton.Cancel
-        )
-        btn_box = QDialogButtonBox(buttons)
-        layout.addWidget(btn_box)
-
-        btn_box.accepted.connect(dlg.accept)
-        btn_box.rejected.connect(dlg.reject)
-
-        # MOSTRAR JANELA
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return
-
-        # PEGAR TEXTO
+        self.input_key = QLineEdit(); self.input_key.setPlaceholderText("Cole sua chave de licença aqui..."); layout.addWidget(self.input_key)
+        buttons = (QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btn_box = QDialogButtonBox(buttons); layout.addWidget(btn_box)
+        btn_box.accepted.connect(dlg.accept); btn_box.rejected.connect(dlg.reject)
+        if dlg.exec() != QDialog.DialogCode.Accepted: return
         key = self.input_key.text().strip()
-        if not key:
-            return
-
-        # VALIDAÇÃO DA LICENÇA
+        if not key: return
         parsed = parse_license_key(key)
-        if not parsed:
-            QMessageBox.critical(self, "Erro", "Licença inválida.")
-            return
-
-        if parsed["expiry"] < time.time():
-            QMessageBox.warning(self, "Erro", "Licença expirada.")
-            return
-
-        if parsed["machine"] and parsed["machine"] != machine_id():
-            QMessageBox.critical(self, "Erro", "Licença pertence a outra máquina.")
-            return
-
-        # SALVAR E ATIVAR
-        save_license_locally(key, parsed)
-        self.is_licensed = True
-        self.license_info = parsed
-        self.update_license_label()
-
+        if not parsed: QMessageBox.critical(self, "Erro", "Licença inválida."); return
+        if parsed["expiry"] < time.time(): QMessageBox.warning(self, "Erro", "Licença expirada."); return
+        if parsed["machine"] and parsed["machine"] != machine_id(): QMessageBox.critical(self, "Erro", "Licença pertence a outra máquina."); return
+        save_license_locally(key, parsed); self.is_licensed = True; self.license_info = parsed; self.update_license_label()
         QMessageBox.information(self, "Sucesso", "Licença ativada com sucesso!")
 
-
-
-    # EXIBIR MACHINE ID
     def show_machine(self):
         QMessageBox.information(self, "Machine ID", machine_id())
 
-    # ============================================================
-    # PLAYER FUNCTIONS
-    # ============================================================ 
+    # --- player actions ---
     def update_license_label(self):
         if self.is_licensed:
             user = self.license_info["user"]
@@ -353,42 +285,124 @@ class SuperPlayer(QWidget):
             self.setWindowTitle("Super Player — FREE")
 
     def open_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Selecione um vídeo", "",
-            "Vídeos (*.mp4 *.avi *.mkv *.mov *.mpg *.mpeg *.wmv)"
-        )
+        file_path, _ = QFileDialog.getOpenFileName(self, "Selecione um vídeo", "", "Vídeos (*.mp4 *.avi *.mkv *.mov *.mpg *.mpeg *.wmv)")
         if file_path:
             self.player.setSource(QUrl.fromLocalFile(file_path))
             self.player.play()
             self.btn_play.setText("⏸️ Pausar")
 
     def toggle_play(self):
-        if self.player.isPlaying():
-            self.player.pause()
-            self.btn_play.setText("▶️ Reproduzir")
+        if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+            self.player.pause(); self.btn_play.setText("▶️ Reproduzir")
         else:
-            self.player.play()
-            self.btn_play.setText("⏸️ Pausar")
+            self.player.play(); self.btn_play.setText("⏸️ Pausar")
 
     def stop_video(self):
-        self.player.stop()
-        self.btn_play.setText("▶️ Reproduzir")
+        self.player.stop(); self.btn_play.setText("▶️ Reproduzir")
 
     def restore_to_main(self):
+        # volta vídeo da janela externa para a janela principal
         self.player.setVideoOutput(self.video_widget)
         self.external_window.hide()
+        # re-show dock if previously visible
+        if self.playlist_dock.isVisible():
+            self.playlist_dock.show()
+        # show exit button in window mode
+        self.btn_exit_corner.show()
 
     def exit_fullscreen(self):
-        if self.external_window.isFullScreen():
-            self.restore_to_main()
-            return
-
+        # ONLY exit fullscreen for the MAIN window (not the external window)
         if self.isFullScreen():
+            # restore decorations and normal window state
             self.setWindowFlags(Qt.WindowType.Window)
             self.showNormal()
-        else:
-            self.close()
+            # reposition and show the corner button now that we're windowed
+            QTimer.singleShot(60, self.reposition_exit_button)
+            return
+        # if not main fullscreen, do nothing (we do not affect external_window here)
+        return
 
+    # === playlist methods ===
+    def add_video_to_playlist(self):
+        files, _ = QFileDialog.getOpenFileNames(self, "Selecionar vídeos", "", "Vídeos (*.mp4 *.avi *.mkv *.mov *.mpg *.mpeg *.wmv)")
+        if files:
+            for f in files:
+                item = QListWidgetItem(os.path.basename(f))
+                item.setData(Qt.ItemDataRole.UserRole, f)
+                self.playlist_widget.addItem(item)
+            self.sync_playlist_from_widget()
+            QMessageBox.information(self, "Playlist", f"{len(files)} vídeo(s) adicionados à lista!")
+
+    def play_playlist(self):
+        self.sync_playlist_from_widget()
+        if not self.playlist: QMessageBox.warning(self, "Playlist vazia", "Nenhum vídeo foi adicionado."); return
+        self.current_index = 0; self.play_video_from_playlist()
+
+    def play_video_from_playlist(self):
+        if 0 <= self.current_index < len(self.playlist):
+            f = self.playlist[self.current_index]
+            self.player.setSource(QUrl.fromLocalFile(f)); self.player.play(); self.btn_play.setText("⏸️ Pausar"); self.highlight_current_item()
+        else:
+            QMessageBox.information(self, "Fim da lista", "Todos os vídeos foram reproduzidos."); self.current_index = 0
+
+    def check_end_of_video(self, status):
+        if status == QMediaPlayer.MediaStatus.EndOfMedia:
+            self.current_index += 1
+            if self.current_index < len(self.playlist):
+                self.play_video_from_playlist()
+            else:
+                self.current_index = 0
+
+    def clear_playlist(self):
+        self.playlist_widget.clear(); self.playlist.clear(); self.current_index = 0; QMessageBox.information(self, "Playlist", "Lista de reprodução limpa.")
+
+    def sync_playlist_from_widget(self, *args, **kwargs):
+        new = []
+        for i in range(self.playlist_widget.count()):
+            it = self.playlist_widget.item(i)
+            path = it.data(Qt.ItemDataRole.UserRole)
+            if path: new.append(path)
+        self.playlist = new
+
+    def on_playlist_double_click(self, item):
+        path = item.data(Qt.ItemDataRole.UserRole)
+        if not path: return
+        for i in range(self.playlist_widget.count()):
+            if self.playlist_widget.item(i) is item:
+                self.current_index = i; break
+        self.play_video_from_playlist()
+
+    def highlight_current_item(self):
+        if 0 <= self.current_index < self.playlist_widget.count():
+            self.playlist_widget.setCurrentRow(self.current_index)
+
+    def play_next(self):
+        self.sync_playlist_from_widget()
+        if not self.playlist: return
+        self.current_index = min(self.current_index + 1, len(self.playlist) - 1)
+        self.play_video_from_playlist()
+
+    def play_previous(self):
+        self.sync_playlist_from_widget()
+        if not self.playlist: return
+        self.current_index = max(self.current_index - 1, 0)
+        self.play_video_from_playlist()
+
+    # --- dock handlers ---
+    def toggle_playlist_dock(self):
+        if self.playlist_dock.isVisible():
+            self.playlist_dock.hide(); self.btn_toggle_dock.setChecked(False)
+        else:
+            self.playlist_dock.show(); self.btn_toggle_dock.setChecked(True)
+
+    def on_dock_top_level_changed(self, top_level: bool):
+        """
+        called when dock is docked/undocked (floating).
+        keep the toggle button state in sync so user can see it's open/floating.
+        """
+        self.btn_toggle_dock.setChecked(self.playlist_dock.isVisible() or self.playlist_dock.isFloating())
+
+    # === UI helpers / seek / shortcuts ===
     def update_position(self, pos):
         self.slider.setValue(pos)
 
@@ -404,51 +418,50 @@ class SuperPlayer(QWidget):
         self.player.setPosition(newpos)
 
     def add_shortcuts(self):
-        sc1 = QAction(self)
-        sc1.setShortcut(QKeySequence("Space"))
-        sc1.triggered.connect(self.toggle_play)
-        self.addAction(sc1)
-
-        sc2 = QAction(self)
-        sc2.setShortcut(QKeySequence("A"))
-        sc2.triggered.connect(lambda: self.jump(-10))
-        self.addAction(sc2)
-
-        sc3 = QAction(self)
-        sc3.setShortcut(QKeySequence("D"))
-        sc3.triggered.connect(lambda: self.jump(10))
-        self.addAction(sc3)
-
-        sc4 = QAction(self)
-        sc4.setShortcut(QKeySequence("Escape"))
-        sc4.triggered.connect(self.exit_fullscreen)
-        self.addAction(sc4)
+        sc1 = QAction(self); sc1.setShortcut(QKeySequence("Space")); sc1.triggered.connect(self.toggle_play); self.addAction(sc1)
+        sc2 = QAction(self); sc2.setShortcut(QKeySequence("A")); sc2.triggered.connect(lambda: self.jump(-10)); self.addAction(sc2)
+        sc3 = QAction(self); sc3.setShortcut(QKeySequence("D")); sc3.triggered.connect(lambda: self.jump(10)); self.addAction(sc3)
 
     def create_monitor_shortcuts(self):
         screens = QApplication.screens()
         for i, screen in enumerate(screens, start=1):
-            act = QAction(self)
-            act.setShortcut(QKeySequence(f"Ctrl+F{i}"))
-            act.triggered.connect(lambda _, m=i: self.play_fullscreen_on_monitor(m))
-            self.addAction(act)
+            act = QAction(self); act.setShortcut(QKeySequence(f"Ctrl+F{i}")); act.triggered.connect(lambda _, m=i: self.play_fullscreen_on_monitor(m)); self.addAction(act)
 
     def play_fullscreen_on_monitor(self, monitor_index):
         screens = QApplication.screens()
         if monitor_index - 1 >= len(screens):
-            QMessageBox.warning(self, "Erro", "Monitor não encontrado.")
-            return
-
+            QMessageBox.warning(self, "Erro", "Monitor não encontrado."); return
         screen = screens[monitor_index - 1]
+        # envia saída do player para a janela externa
         self.player.setVideoOutput(self.external_window.video_widget)
+        # hide dock while in external fullscreen (optional)
+        self.playlist_dock.hide()
+        self.btn_toggle_dock.setChecked(False)
+        # hide the corner exit button when going to external fullscreen
+        self.btn_exit_corner.hide()
         self.external_window.show_on_screen(screen)
 
+    # reposition exit button when the window resizes
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.reposition_exit_button()
 
-# ============================================================
-# MAIN
-# ============================================================
+    def reposition_exit_button(self):
+        # place the button at top-right corner inside the window chrome
+        margin = 10
+        x = self.width() - self.btn_exit_corner.width() - margin
+        y = margin
+        # if window is in fullscreen mode, keep it hidden (we only want it in window mode)
+        if self.isFullScreen() or (self.external_window.isFullScreen()):
+            self.btn_exit_corner.hide()
+        else:
+            self.btn_exit_corner.move(x, y)
+            self.btn_exit_corner.show()
+
+# --- main ---
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     show_splash(app)
-    window = SuperPlayer()
-    window.show()
+    win = SuperPlayer()
+    win.show()
     sys.exit(app.exec())
