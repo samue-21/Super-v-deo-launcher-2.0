@@ -15,11 +15,16 @@ from PyQt6.QtWidgets import (
     QSlider, QLabel, QLineEdit, QDialog, QDialogButtonBox,
     QDockWidget, QListWidget, QAbstractItemView, QListWidgetItem
 )
-
 from PyQt6.QtGui import (
-    QIcon, QPixmap, QPainter, QColor, QPolygon,
-    QKeySequence, QAction
+    QIcon,
+    QPixmap,
+    QPainter,
+    QColor,
+    QPolygon,
+    QKeySequence,
+    QAction   
 )
+
 
 from PyQt6.QtCore import (
     QUrl, Qt, QTimer, QPoint
@@ -32,6 +37,9 @@ from PyQt6.QtMultimediaWidgets import QVideoWidget
 SECRET = b"TROQUE-Essa-SECRET-ANTES-DE-DISTRIBUIR"
 LICENSE_DIR = Path.home() / ".superplayer"
 LICENSE_FILE = LICENSE_DIR / "license.json"
+PLAYLIST_FILE = LICENSE_DIR / "playlist.json"
+PLAYLIST_FILE = Path.home() / ".superplayer" / "playlist.json"
+
 
 def machine_id():
     try:
@@ -112,22 +120,84 @@ def show_splash(app):
     return splash
 
 class VideoWindow(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, exit_callback=None):
         super().__init__(parent)
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        self.exit_callback = exit_callback
+
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.WindowStaysOnTopHint
+        )
+
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setFocus()
+       
+
+
         self.video_widget = QVideoWidget(self)
+
+        self.video_widget = QVideoWidget(self)
+
+        self.btn_exit = QPushButton("⛔ Sair Tela Cheia", self)
+        self.btn_exit.setFixedSize(150, 36)
+        self.btn_exit.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(200, 40, 40, 200);
+                color: white;
+                font-weight: bold;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: rgba(255, 80, 80, 230);
+            }
+        """)
+
+        # ✅ CORREÇÃO AQUI
+        if callable(self.exit_callback):
+            self.btn_exit.clicked.connect(self.exit_callback)
+
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0,0,0,0)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.video_widget)
+
     def show_on_screen(self, screen):
-        geo = screen.geometry()
-        self.setGeometry(geo)
+        self.setGeometry(screen.geometry())
         self.showFullScreen()
+
+    # 🔥 FORÇA FOCO DE TECLADO
+        self.activateWindow()
+        self.raise_()
+        self.setFocus()
+
+        self.reposition_exit_button()
+
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.reposition_exit_button()
+
+    def reposition_exit_button(self):
+        margin = 16
+        self.btn_exit.move(
+            self.width() - self.btn_exit.width() - margin,
+            margin
+        )
+
+
+
+
+   
+
+
 
 # ============================================================
 class SuperPlayer(QMainWindow):
     def __init__(self):
         super().__init__()
+
+        
+
+       
         ok, info = validate_local_license()
         self.is_licensed = ok
         self.license_info = info if ok else None
@@ -135,6 +205,10 @@ class SuperPlayer(QMainWindow):
         self.setWindowTitle("Super Player")
         self.setGeometry(200,200,1000,640)
         self.setWindowIcon(QIcon(generate_icon_pixmap(256)))
+
+        #SALVAR PLAYLIST 
+        self.load_playlist()
+
 
         # core player
         self.player = QMediaPlayer()
@@ -149,9 +223,9 @@ class SuperPlayer(QMainWindow):
         self.player.mediaStatusChanged.connect(self.check_end_of_video)
 
         # external fullscreen window
-        self.external_window = VideoWindow()
-
-        # menu
+        self.external_window = VideoWindow(exit_callback=self.restore_to_main)
+        QApplication.instance().installEventFilter(self)
+         # menu
         menu = self.menuBar()
         file_menu = menu.addMenu("Arquivo")
         act_open = QAction("Abrir vídeo...", self); act_open.triggered.connect(self.open_file); file_menu.addAction(act_open)
@@ -163,7 +237,10 @@ class SuperPlayer(QMainWindow):
         a_add = QAction("Adicionar vídeo à lista", self); a_add.triggered.connect(self.add_video_to_playlist); playlist_menu.addAction(a_add)
         a_play = QAction("Reproduzir Lista", self); a_play.triggered.connect(self.play_playlist); playlist_menu.addAction(a_play)
         a_clear = QAction("Limpar lista", self); a_clear.triggered.connect(self.clear_playlist); playlist_menu.addAction(a_clear)
-
+        a_save = QAction("Salvar Playlist", self)
+        a_save.triggered.connect(self.save_playlist)
+        playlist_menu.addAction(a_save)
+        
         # central widget
         central = QWidget()
         cl = QVBoxLayout(central)
@@ -184,7 +261,21 @@ class SuperPlayer(QMainWindow):
         self.btn_play = QPushButton("⏯️ Reprodução"); self.btn_play.clicked.connect(self.toggle_play); ctrl.addWidget(self.btn_play)
         self.btn_stop = QPushButton("⏹️ Parar"); self.btn_stop.clicked.connect(self.stop_video); ctrl.addWidget(self.btn_stop)
         self.btn_next = QPushButton("⏭️ Próximo"); self.btn_next.clicked.connect(self.play_next); ctrl.addWidget(self.btn_next)
-        self.btn_external = QPushButton("▶ Fullscreen (monitor)"); self.btn_external.clicked.connect(lambda: self.play_fullscreen_on_monitor(1)); ctrl.addWidget(self.btn_external)
+        self.btn_external = QPushButton("▶ Fullscreen (monitor)")
+        self.btn_external.clicked.connect(lambda: self.play_fullscreen_on_monitor(1))
+        ctrl.addWidget(self.btn_external)
+
+        self.btn_external.setText("⛔ Fechar Tela Cheia")
+
+        try:
+            self.btn_external.clicked.disconnect()
+        except TypeError:
+            pass  # não havia conexão anterior (seguro)
+
+        self.btn_external.clicked.connect(self.close_external_fullscreen)
+
+
+ 
 
         self.btn_toggle_dock = QPushButton("📑 Playlist")
         self.btn_toggle_dock.setCheckable(True)
@@ -193,6 +284,8 @@ class SuperPlayer(QMainWindow):
 
         cl.addLayout(ctrl)
         self.setCentralWidget(central)
+
+        
 
         # ---------------------------
         # BOTÃO: Sair Tela Cheia (CANTO SUPERIOR DIREITO - modo janela)
@@ -244,7 +337,7 @@ class SuperPlayer(QMainWindow):
 
         # shortcuts and monitors
         self.create_monitor_shortcuts()
-        self.add_shortcuts()
+      
 
         self.update_license_label()
 
@@ -300,15 +393,48 @@ class SuperPlayer(QMainWindow):
     def stop_video(self):
         self.player.stop(); self.btn_play.setText("▶️ Reproduzir")
 
+
+
+
     def restore_to_main(self):
-        # volta vídeo da janela externa para a janela principal
-        self.player.setVideoOutput(self.video_widget)
-        self.external_window.hide()
-        # re-show dock if previously visible
-        if self.playlist_dock.isVisible():
-            self.playlist_dock.show()
-        # show exit button in window mode
-        self.btn_exit_corner.show()
+        """
+        Volta o vídeo da janela externa para a janela principal,
+        esconde a janela externa e restaura UI (dock, estado) de forma segura.
+        """
+        try:
+        # Devolve o vídeo para o widget principal
+            if hasattr(self, "player") and hasattr(self, "video_widget"):
+                self.player.setVideoOutput(self.video_widget)
+
+        # Esconde a janela externa
+            if hasattr(self, "external_window") and self.external_window.isVisible():
+                self.external_window.hide()
+
+        # Mostra botão de sair fullscreen da janela principal
+            if hasattr(self, "btn_exit_corner"):
+                self.btn_exit_corner.show()
+
+        # Restaura dock se estava ativa
+            if hasattr(self, "playlist_dock") and hasattr(self, "btn_toggle_dock"):
+                if self.btn_toggle_dock.isChecked():
+                    self.playlist_dock.show()
+
+        except Exception as e:
+            print("restore_to_main: erro inesperado:", e)
+
+
+    def close_external_fullscreen(self):
+        """
+        Fecha SOMENTE a tela fullscreen externa, se estiver ativa.
+        """
+        if hasattr(self, "external_window") and self.external_window.isFullScreen():
+            self.restore_to_main()
+
+
+
+
+
+
 
     def exit_fullscreen(self):
         # ONLY exit fullscreen for the MAIN window (not the external window)
@@ -321,6 +447,9 @@ class SuperPlayer(QMainWindow):
             return
         # if not main fullscreen, do nothing (we do not affect external_window here)
         return
+    
+
+
 
     # === playlist methods ===
     def add_video_to_playlist(self):
@@ -345,13 +474,16 @@ class SuperPlayer(QMainWindow):
         else:
             QMessageBox.information(self, "Fim da lista", "Todos os vídeos foram reproduzidos."); self.current_index = 0
 
+    # ⬇️ ESTE MÉTODO TEM QUE ESTAR AQUI DENTRO ⬇️
     def check_end_of_video(self, status):
         if status == QMediaPlayer.MediaStatus.EndOfMedia:
             self.current_index += 1
-            if self.current_index < len(self.playlist):
-                self.play_video_from_playlist()
-            else:
-                self.current_index = 0
+        if self.current_index < len(self.playlist):
+            self.play_video_from_playlist()
+        else:
+            self.current_index = 0
+
+
 
     def clear_playlist(self):
         self.playlist_widget.clear(); self.playlist.clear(); self.current_index = 0; QMessageBox.information(self, "Playlist", "Lista de reprodução limpa.")
@@ -417,10 +549,7 @@ class SuperPlayer(QMainWindow):
         newpos = max(0, min(newpos, self.player.duration()))
         self.player.setPosition(newpos)
 
-    def add_shortcuts(self):
-        sc1 = QAction(self); sc1.setShortcut(QKeySequence("Space")); sc1.triggered.connect(self.toggle_play); self.addAction(sc1)
-        sc2 = QAction(self); sc2.setShortcut(QKeySequence("A")); sc2.triggered.connect(lambda: self.jump(-10)); self.addAction(sc2)
-        sc3 = QAction(self); sc3.setShortcut(QKeySequence("D")); sc3.triggered.connect(lambda: self.jump(10)); self.addAction(sc3)
+    
 
     def create_monitor_shortcuts(self):
         screens = QApplication.screens()
@@ -440,6 +569,9 @@ class SuperPlayer(QMainWindow):
         # hide the corner exit button when going to external fullscreen
         self.btn_exit_corner.hide()
         self.external_window.show_on_screen(screen)
+        self.external_window.activateWindow()
+        self.external_window.raise_()
+
 
     # reposition exit button when the window resizes
     def resizeEvent(self, event):
@@ -447,6 +579,7 @@ class SuperPlayer(QMainWindow):
         self.reposition_exit_button()
 
     def reposition_exit_button(self):
+
         # place the button at top-right corner inside the window chrome
         margin = 10
         x = self.width() - self.btn_exit_corner.width() - margin
@@ -457,6 +590,68 @@ class SuperPlayer(QMainWindow):
         else:
             self.btn_exit_corner.move(x, y)
             self.btn_exit_corner.show()
+
+    def save_playlist(self):
+        """
+        Salva a playlist atual (ordem + arquivos) em disco.
+        """
+        try:
+            self.sync_playlist_from_widget()  # garante ordem correta
+
+            data = {
+            "playlist": self.playlist,
+            "current_index": self.current_index
+        }
+
+        LICENSE_DIR.mkdir(parents=True, exist_ok=True)
+
+        with open(PLAYLIST_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+
+            QMessageBox.information(self, "Playlist", "Playlist salva com sucesso!")
+
+        except Exception as e:
+        QMessageBox.critical(self, "Erro", f"Erro ao salvar playlist:\n{e}")
+
+    def load_playlist(self):
+        """
+        Carrega a playlist salva automaticamente ao iniciar o player.
+        """
+        if not PLAYLIST_FILE.exists():
+            return
+
+    try:
+        with open(PLAYLIST_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        self.playlist_widget.clear()
+        self.playlist.clear()
+
+        for path in data.get("playlist", []):
+            if os.path.exists(path):
+                item = QListWidgetItem(os.path.basename(path))
+                item.setData(Qt.ItemDataRole.UserRole, path)
+                self.playlist_widget.addItem(item)
+                self.playlist.append(path)
+
+        self.current_index = data.get("current_index", 0)
+
+    except Exception as e:
+        print("Erro ao carregar playlist:", e)
+
+    def closeEvent(self, event):
+        self.save_playlist()
+        super().closeEvent(event)
+
+
+
+
+
+
+
+
+
+            
 
 # --- main ---
 if __name__ == "__main__":
