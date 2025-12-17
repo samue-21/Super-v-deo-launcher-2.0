@@ -25,7 +25,7 @@ from PyQt6.QtGui import (
     QAction   
 )
 
-
+from PyQt5.QtWidgets import QInputDialog 
 from PyQt6.QtCore import (
     QUrl, Qt, QTimer, QPoint
 )
@@ -591,28 +591,58 @@ class SuperPlayer(QMainWindow):
             self.btn_exit_corner.move(x, y)
             self.btn_exit_corner.show()
 
-    def save_playlist(self):
-        """
-        Salva a playlist atual (ordem + arquivos) em disco.
-        """
-        try:
-            self.sync_playlist_from_widget()  # garante ordem correta
+  
+    
+def save_playlist(self):
+    """
+    Salva a playlist atual (ordem + arquivos) em disco,
+    pedindo um nome ao usuário.
+    """
+    try:
+        self.sync_playlist_from_widget()
 
-            data = {
+        # 🔹 pede o nome da playlist
+        name, ok = QInputDialog.getText(
+            self,
+            "Salvar playlist",
+            "Nome da playlist:"
+        )
+
+        if not ok or not name.strip():
+            return  # usuário cancelou ou não digitou nada
+
+        # 🔹 limpa o nome para usar como arquivo
+        safe_name = re.sub(r'[\\/:*?"<>|]', '_', name.strip())
+
+        data = {
+            "name": name,
             "playlist": self.playlist,
             "current_index": self.current_index
         }
 
         LICENSE_DIR.mkdir(parents=True, exist_ok=True)
 
-        with open(PLAYLIST_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+        playlist_file = LICENSE_DIR / f"{safe_name}.json"
 
-            QMessageBox.information(self, "Playlist", "Playlist salva com sucesso!")
+        with open(playlist_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
 
-        except Exception as e:
-        QMessageBox.critical(self, "Erro", f"Erro ao salvar playlist:\n{e}")
+        QMessageBox.information(
+            self,
+            "Playlist",
+            f"Playlist '{name}' salva com sucesso!"
+        )
 
+    except Exception as e:
+        QMessageBox.critical(
+            self,
+            "Erro",
+            f"Erro ao salvar playlist:\n{e}"
+        )
+
+
+
+  
     def load_playlist(self):
         """
         Carrega a playlist salva automaticamente ao iniciar o player.
