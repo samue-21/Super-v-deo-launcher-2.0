@@ -7,6 +7,8 @@ import hashlib
 import hmac
 import time
 import platform
+import re
+
 from pathlib import Path
 
 from PyQt6.QtWidgets import (
@@ -25,7 +27,7 @@ from PyQt6.QtGui import (
     QAction   
 )
 
-from PyQt5.QtWidgets import QInputDialog 
+from PyQt6.QtWidgets import QInputDialog 
 from PyQt6.QtCore import (
     QUrl, Qt, QTimer, QPoint
 )
@@ -192,12 +194,28 @@ class VideoWindow(QWidget):
 
 # ============================================================
 class SuperPlayer(QMainWindow):
+   
     def __init__(self):
         super().__init__()
 
         
+        self.player = QMediaPlayer()
+        self.audio_output = QAudioOutput()
+        self.player.setAudioOutput(self.audio_output)
+
+        self.video_widget = QVideoWidget()
+        self.player.setVideoOutput(self.video_widget)
 
        
+        self.player.mediaStatusChanged.connect(self.check_end_of_video)
+
+       
+        self.load_playlist()
+
+        ok, info = validate_local_license()
+        self.is_licensed = ok
+        self.license_info = info if ok else None
+        
         ok, info = validate_local_license()
         self.is_licensed = ok
         self.license_info = info if ok else None
@@ -206,11 +224,7 @@ class SuperPlayer(QMainWindow):
         self.setGeometry(200,200,1000,640)
         self.setWindowIcon(QIcon(generate_icon_pixmap(256)))
 
-        #SALVAR PLAYLIST 
-        self.load_playlist()
-
-
-        # core player
+         # core player
         self.player = QMediaPlayer()
         self.audio_output = QAudioOutput()
         self.player.setAudioOutput(self.audio_output)
@@ -240,6 +254,10 @@ class SuperPlayer(QMainWindow):
         a_save = QAction("Salvar Playlist", self)
         a_save.triggered.connect(self.save_playlist)
         playlist_menu.addAction(a_save)
+        a_load = QAction("Abrir playlist salva", self)
+        a_load.triggered.connect(self.load_playlist_from_file)
+        playlist_menu.addAction(a_load)
+
         
         # central widget
         central = QWidget()
@@ -339,7 +357,36 @@ class SuperPlayer(QMainWindow):
         self.create_monitor_shortcuts()
       
 
-        self.update_license_label()
+        self.update_license_label()    
+
+    def load_playlist(self):
+        """
+        Carrega a playlist salva automaticamente ao iniciar o player.
+        """
+        if not PLAYLIST_FILE.exists():
+            return
+
+        try:
+            with open(PLAYLIST_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            self.playlist_widget.clear()
+            self.playlist.clear()
+
+            for path in data.get("playlist", []):
+                if os.path.exists(path):
+                    item = QListWidgetItem(os.path.basename(path))
+                    item.setData(Qt.ItemDataRole.UserRole, path)
+                    self.playlist_widget.addItem(item)
+                    self.playlist.append(path)
+
+            self.current_index = data.get("current_index", 0)
+
+        except Exception as e:
+            print("Erro ao carregar playlist:", e)
+
+    
+
 
     # --- license UI / actions (unchanged) ---
     def activate_license(self):
@@ -392,6 +439,112 @@ class SuperPlayer(QMainWindow):
 
     def stop_video(self):
         self.player.stop(); self.btn_play.setText("▶️ Reproduzir")
+    
+
+    def load_playlist_from_file(self):
+        """
+        Carrega uma playlist salva de arquivo JSON
+        """
+        try:
+            file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Abrir playlist",
+            str(LICENSE_DIR),
+            "Playlist (*.json)"
+        )
+
+
+            if not file_path:
+                return  
+
+           
+                   
+
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            playlist = data.get("playlist", [])
+            current_index = data.get("current_index", 0)
+            if not playlist:
+                QMessageBox.warning(self, "Playlist", "A playlist está vazia.")
+                return  
+
+            # limpa playlist atual
+            self.playlist_widget.clear()
+            self.playlist.clear()
+            # limpa playlist atual
+            self.playlist_widget.clear()
+            self.playlist.clear()
+            # restaura índice
+            self.current_index = min(current_index, len(self.playlist) - 1)
+            # destaca item atual
+            self.highlight_current_item()
+
+            QMessageBox.information(
+            self,
+            "Playlist",
+            "Playlist carregada com sucesso!"
+        )
+
+
+
+
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Erro",
+            f"Erro ao carregar playlist:\n{e}"
+            )
+
+
+
+
+
+    def save_playlist(self):
+        """
+        Salva a playlist atual (ordem + arquivos) em disco,
+        pedindo um nome ao usuário.
+        """
+        try:
+            self.sync_playlist_from_widget()
+
+            # 🔹 pede o nome da playlist
+            name, ok = QInputDialog.getText(
+                self,
+                "Salvar playlist",
+                "Nome da playlist:"
+            )
+
+            if not ok or not name.strip():
+                return  # ← AGORA ESTE return É VÁLIDO
+
+            # 🔹 limpa o nome para usar como arquivo
+            safe_name = re.sub(r'[\\/:*?"<>|]', '_', name.strip())
+
+            data = {
+                "name": name,
+                "playlist": self.playlist,
+                "current_index": self.current_index
+            }
+
+            LICENSE_DIR.mkdir(parents=True, exist_ok=True)
+            playlist_file = LICENSE_DIR / f"{safe_name}.json"
+
+            with open(playlist_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+
+            QMessageBox.information(
+                self,
+                "Playlist",
+                f"Playlist '{name}' salva com sucesso!"
+            )
+
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Erro",
+                f"Erro ao salvar playlist:\n{e}"
+            )
 
 
 
@@ -593,81 +746,12 @@ class SuperPlayer(QMainWindow):
 
   
     
-def save_playlist(self):
-    """
-    Salva a playlist atual (ordem + arquivos) em disco,
-    pedindo um nome ao usuário.
-    """
-    try:
-        self.sync_playlist_from_widget()
 
-        # 🔹 pede o nome da playlist
-        name, ok = QInputDialog.getText(
-            self,
-            "Salvar playlist",
-            "Nome da playlist:"
-        )
-
-        if not ok or not name.strip():
-            return  # usuário cancelou ou não digitou nada
-
-        # 🔹 limpa o nome para usar como arquivo
-        safe_name = re.sub(r'[\\/:*?"<>|]', '_', name.strip())
-
-        data = {
-            "name": name,
-            "playlist": self.playlist,
-            "current_index": self.current_index
-        }
-
-        LICENSE_DIR.mkdir(parents=True, exist_ok=True)
-
-        playlist_file = LICENSE_DIR / f"{safe_name}.json"
-
-        with open(playlist_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-
-        QMessageBox.information(
-            self,
-            "Playlist",
-            f"Playlist '{name}' salva com sucesso!"
-        )
-
-    except Exception as e:
-        QMessageBox.critical(
-            self,
-            "Erro",
-            f"Erro ao salvar playlist:\n{e}"
-        )
 
 
 
   
-    def load_playlist(self):
-        """
-        Carrega a playlist salva automaticamente ao iniciar o player.
-        """
-        if not PLAYLIST_FILE.exists():
-            return
-
-    try:
-        with open(PLAYLIST_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        self.playlist_widget.clear()
-        self.playlist.clear()
-
-        for path in data.get("playlist", []):
-            if os.path.exists(path):
-                item = QListWidgetItem(os.path.basename(path))
-                item.setData(Qt.ItemDataRole.UserRole, path)
-                self.playlist_widget.addItem(item)
-                self.playlist.append(path)
-
-        self.current_index = data.get("current_index", 0)
-
-    except Exception as e:
-        print("Erro ao carregar playlist:", e)
+    
 
     def closeEvent(self, event):
         self.save_playlist()
