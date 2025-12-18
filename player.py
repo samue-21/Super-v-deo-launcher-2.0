@@ -8,8 +8,12 @@ import hmac
 import time
 import platform
 import re
+import subprocess
+import tempfile
 
 from pathlib import Path
+from PyQt6.QtGui import QPixmap, QIcon
+from PyQt6.QtCore import Qt
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QPushButton, QVBoxLayout, QFileDialog,
@@ -26,6 +30,7 @@ from PyQt6.QtGui import (
     QKeySequence,
     QAction   
 )
+from PyQt6.QtCore import QSize
 
 from PyQt6.QtWidgets import QInputDialog 
 from PyQt6.QtCore import (
@@ -205,12 +210,14 @@ class SuperPlayer(QMainWindow):
 
         self.video_widget = QVideoWidget()
         self.player.setVideoOutput(self.video_widget)
+        self.playlist_widget = QListWidget()
+
 
        
         self.player.mediaStatusChanged.connect(self.check_end_of_video)
 
        
-        self.load_playlist()
+        
 
         ok, info = validate_local_license()
         self.is_licensed = ok
@@ -257,6 +264,8 @@ class SuperPlayer(QMainWindow):
         a_load = QAction("Abrir playlist salva", self)
         a_load.triggered.connect(self.load_playlist_from_file)
         playlist_menu.addAction(a_load)
+        
+
 
         
         # central widget
@@ -439,6 +448,8 @@ class SuperPlayer(QMainWindow):
 
     def stop_video(self):
         self.player.stop(); self.btn_play.setText("▶️ Reproduzir")
+
+    
     
 
     def load_playlist_from_file(self):
@@ -450,15 +461,13 @@ class SuperPlayer(QMainWindow):
             self,
             "Abrir playlist",
             str(LICENSE_DIR),
-            "Playlist (*.json)"
+            "Playlist (*.sp *.json)"
         )
 
 
             if not file_path:
                 return  
-
-           
-                   
+                             
 
             with open(file_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -472,9 +481,15 @@ class SuperPlayer(QMainWindow):
             # limpa playlist atual
             self.playlist_widget.clear()
             self.playlist.clear()
-            # limpa playlist atual
-            self.playlist_widget.clear()
-            self.playlist.clear()
+            
+             # adiciona itens
+            for path in playlist:
+                if os.path.exists(path):
+                    item = QListWidgetItem(os.path.basename(path))
+                    item.setData(Qt.ItemDataRole.UserRole, path)
+                    self.playlist_widget.addItem(item)
+                    self.playlist.append(path)
+
             # restaura índice
             self.current_index = min(current_index, len(self.playlist) - 1)
             # destaca item atual
@@ -486,19 +501,12 @@ class SuperPlayer(QMainWindow):
             "Playlist carregada com sucesso!"
         )
 
-
-
-
         except Exception as e:
             QMessageBox.critical(
                 self,
                 "Erro",
             f"Erro ao carregar playlist:\n{e}"
             )
-
-
-
-
 
     def save_playlist(self):
         """
@@ -528,7 +536,7 @@ class SuperPlayer(QMainWindow):
             }
 
             LICENSE_DIR.mkdir(parents=True, exist_ok=True)
-            playlist_file = LICENSE_DIR / f"{safe_name}.json"
+            playlist_file = LICENSE_DIR / f"{safe_name}.sp"
 
             with open(playlist_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
@@ -545,9 +553,6 @@ class SuperPlayer(QMainWindow):
                 "Erro",
                 f"Erro ao salvar playlist:\n{e}"
             )
-
-
-
 
     def restore_to_main(self):
         """
@@ -583,12 +588,7 @@ class SuperPlayer(QMainWindow):
         if hasattr(self, "external_window") and self.external_window.isFullScreen():
             self.restore_to_main()
 
-
-
-
-
-
-
+       
     def exit_fullscreen(self):
         # ONLY exit fullscreen for the MAIN window (not the external window)
         if self.isFullScreen():
@@ -601,10 +601,7 @@ class SuperPlayer(QMainWindow):
         # if not main fullscreen, do nothing (we do not affect external_window here)
         return
     
-
-
-
-    # === playlist methods ===
+        # === playlist methods ===
     def add_video_to_playlist(self):
         files, _ = QFileDialog.getOpenFileNames(self, "Selecionar vídeos", "", "Vídeos (*.mp4 *.avi *.mkv *.mov *.mpg *.mpeg *.wmv)")
         if files:
@@ -635,8 +632,6 @@ class SuperPlayer(QMainWindow):
             self.play_video_from_playlist()
         else:
             self.current_index = 0
-
-
 
     def clear_playlist(self):
         self.playlist_widget.clear(); self.playlist.clear(); self.current_index = 0; QMessageBox.information(self, "Playlist", "Lista de reprodução limpa.")
@@ -701,9 +696,7 @@ class SuperPlayer(QMainWindow):
         newpos = self.player.position() + seconds * 1000
         newpos = max(0, min(newpos, self.player.duration()))
         self.player.setPosition(newpos)
-
     
-
     def create_monitor_shortcuts(self):
         screens = QApplication.screens()
         for i, screen in enumerate(screens, start=1):
@@ -725,7 +718,6 @@ class SuperPlayer(QMainWindow):
         self.external_window.activateWindow()
         self.external_window.raise_()
 
-
     # reposition exit button when the window resizes
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -743,29 +735,8 @@ class SuperPlayer(QMainWindow):
         else:
             self.btn_exit_corner.move(x, y)
             self.btn_exit_corner.show()
-
-  
     
-
-
-
-
-  
-    
-
-    def closeEvent(self, event):
-        self.save_playlist()
-        super().closeEvent(event)
-
-
-
-
-
-
-
-
-
-            
+                    
 
 # --- main ---
 if __name__ == "__main__":
