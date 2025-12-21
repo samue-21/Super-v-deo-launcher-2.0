@@ -46,6 +46,8 @@ LICENSE_DIR = Path.home() / ".superplayer"
 LICENSE_FILE = LICENSE_DIR / "license.json"
 PLAYLIST_FILE = LICENSE_DIR / "playlist.json"
 PLAYLIST_FILE = Path.home() / ".superplayer" / "playlist.json"
+LAST_PLAYLIST_FILE = LICENSE_DIR / "last_playlist.json"
+
 
 
 def machine_id():
@@ -211,14 +213,13 @@ class SuperPlayer(QMainWindow):
         self.video_widget = QVideoWidget()
         self.player.setVideoOutput(self.video_widget)
         self.playlist_widget = QListWidget()
+        self.playlist = []
+        self.current_index = 0
 
+        self.load_last_playlist()
 
-       
-        self.player.mediaStatusChanged.connect(self.check_end_of_video)
-
-       
+                   
         
-
         ok, info = validate_local_license()
         self.is_licensed = ok
         self.license_info = info if ok else None
@@ -238,11 +239,7 @@ class SuperPlayer(QMainWindow):
         self.video_widget = QVideoWidget()
         self.player.setVideoOutput(self.video_widget)
 
-        # playlist data + signal
-        self.playlist = []
-        self.current_index = 0
-        self.player.mediaStatusChanged.connect(self.check_end_of_video)
-
+               
         # external fullscreen window
         self.external_window = VideoWindow(exit_callback=self.restore_to_main)
         QApplication.instance().installEventFilter(self)
@@ -254,18 +251,7 @@ class SuperPlayer(QMainWindow):
         act_machine = QAction("Mostrar Machine ID", self); act_machine.triggered.connect(self.show_machine); file_menu.addAction(act_machine)
         act_close = QAction("Fechar Player", self); act_close.triggered.connect(self.close); file_menu.addAction(act_close)
 
-        playlist_menu = menu.addMenu("Lista Reprodução")
-        a_add = QAction("Adicionar vídeo à lista", self); a_add.triggered.connect(self.add_video_to_playlist); playlist_menu.addAction(a_add)
-        a_play = QAction("Reproduzir Lista", self); a_play.triggered.connect(self.play_playlist); playlist_menu.addAction(a_play)
-        a_clear = QAction("Limpar lista", self); a_clear.triggered.connect(self.clear_playlist); playlist_menu.addAction(a_clear)
-        a_save = QAction("Salvar Playlist", self)
-        a_save.triggered.connect(self.save_playlist)
-        playlist_menu.addAction(a_save)
-        a_load = QAction("Abrir playlist salva", self)
-        a_load.triggered.connect(self.load_playlist_from_file)
-        playlist_menu.addAction(a_load)
-        
-
+              
 
         
         # central widget
@@ -368,35 +354,7 @@ class SuperPlayer(QMainWindow):
 
         self.update_license_label()    
 
-    def load_playlist(self):
-        """
-        Carrega a playlist salva automaticamente ao iniciar o player.
-        """
-        if not PLAYLIST_FILE.exists():
-            return
-
-        try:
-            with open(PLAYLIST_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-
-            self.playlist_widget.clear()
-            self.playlist.clear()
-
-            for path in data.get("playlist", []):
-                if os.path.exists(path):
-                    item = QListWidgetItem(os.path.basename(path))
-                    item.setData(Qt.ItemDataRole.UserRole, path)
-                    self.playlist_widget.addItem(item)
-                    self.playlist.append(path)
-
-            self.current_index = data.get("current_index", 0)
-
-        except Exception as e:
-            print("Erro ao carregar playlist:", e)
-
-    
-
-
+          
     # --- license UI / actions (unchanged) ---
     def activate_license(self):
         dlg = QDialog(self); dlg.setWindowTitle("Ativar Licença"); dlg.setFixedSize(480,260)
@@ -434,11 +392,165 @@ class SuperPlayer(QMainWindow):
             self.setWindowTitle("Super Player — FREE")
 
     def open_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Selecione um vídeo", "", "Vídeos (*.mp4 *.avi *.mkv *.mov *.mpg *.mpeg *.wmv)")
-        if file_path:
-            self.player.setSource(QUrl.fromLocalFile(file_path))
+        files, _ = QFileDialog.getOpenFileNames(
+        self,
+        "Selecionar vídeos",
+        "",
+        "Vídeos (*.mp4 *.avi *.mkv *.mov *.wmv)"
+    )
+
+        if not files:
+            return
+
+        self.player.stop()
+
+        for file_path in files:
+            if not os.path.exists(file_path):
+                continue
+
+        # evita duplicação
+            if file_path in self.playlist:
+                continue
+
+            self.playlist.append(file_path)
+
+            item = QListWidgetItem(os.path.basename(file_path))
+            item.setData(Qt.ItemDataRole.UserRole, file_path)
+            self.playlist_widget.addItem(item)
+
+    # toca o primeiro arquivo adicionado
+            self.current_index = len(self.playlist) - len(files)
+            self.play_video_from_playlist()
+
+
+            self.save_last_playlist()
+
+
+    def save_last_playlist(self):
+        try:
+            print("💾 Salvando playlist automática...")
+
+            print("Playlist:", self.playlist)
+            print("Index:", self.current_index)
+
+            if not self.playlist:
+                print("⚠ Playlist vazia, não salvou")
+                return
+
+            data = {
+            "playlist": self.playlist,
+            "current_index": self.current_index
+        }
+
+            LICENSE_DIR.mkdir(parents=True, exist_ok=True)
+
+            with open(LAST_PLAYLIST_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+
+            print("✅ Playlist salva em:", LAST_PLAYLIST_FILE)
+
+        except Exception as e:
+            print("❌ Erro ao salvar playlist:", e)
+
+
+
+    
+
+    def load_playlist(self):
+        """
+        Carrega a playlist salva automaticamente ao iniciar o player.
+        """
+        if not PLAYLIST_FILE.exists():
+            return
+
+        try:
+            with open(PLAYLIST_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            self.playlist_widget.clear()
+            self.playlist.clear()
+
+            for path in data.get("playlist", []):
+                if os.path.exists(path):
+                    item = QListWidgetItem(os.path.basename(path))
+                    item.setData(Qt.ItemDataRole.UserRole, path)
+                    self.playlist_widget.addItem(item)
+                    self.playlist.append(path)
+
+            self.current_index = data.get("current_index", 0)
+
+        except Exception as e:
+            print("Erro ao carregar playlist:", e)
+
+    def load_last_playlist(self):
+        try:
+
+            if not LAST_PLAYLIST_FILE.exists():
+                return
+
+            with open(LAST_PLAYLIST_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            self.playlist.clear()
+            self.playlist_widget.clear()
+
+            self.playlist = data.get("playlist", [])
+            self.current_index = data.get("current_index", 0)
+
+        # popula visualmente a lista
+            self.playlist_widget.clear()
+            for path in self.playlist:
+                if self.playlist:
+                    self.highlight_current_item()
+
+                    print("📂 Playlist restaurada automaticamente")
+
+        except Exception as e:
+            print("❌ Erro ao carregar playlist automática:", e)
+        except Exception as e:
+            print("Erro ao carregar última playlist:", e)
+
+    def on_playlist_double_click(self, item):
+        path = item.data(Qt.ItemDataRole.UserRole)
+
+        if not path:
+            return
+
+        if path not in self.playlist:
+            QMessageBox.warning(self, "Erro", "Arquivo não encontrado na playlist.")
+            return
+
+        self.current_index = self.playlist.index(path)
+        self.play_video_from_playlist()
+
+
+
+    def play_video_from_playlist(self):
+        if not self.playlist:
+            return
+
+        if not (0 <= self.current_index < len(self.playlist)):
+            return
+
+        f = self.playlist[self.current_index]
+
+        if not os.path.exists(f):
+            QMessageBox.warning(self, "Erro", f"Arquivo não encontrado:\n{f}")
+            return
+
+        try:
+            self.player.setVideoOutput(self.video_widget)
+            self.player.setSource(QUrl.fromLocalFile(f))
             self.player.play()
             self.btn_play.setText("⏸️ Pausar")
+            self.highlight_current_item()
+        except Exception as e:
+            print("Erro ao reproduzir:", e)
+
+
+
+
+
 
     def toggle_play(self):
         if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
@@ -449,111 +561,7 @@ class SuperPlayer(QMainWindow):
     def stop_video(self):
         self.player.stop(); self.btn_play.setText("▶️ Reproduzir")
 
-    
-    
-
-    def load_playlist_from_file(self):
-        """
-        Carrega uma playlist salva de arquivo JSON
-        """
-        try:
-            file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Abrir playlist",
-            str(LICENSE_DIR),
-            "Playlist (*.sp *.json)"
-        )
-
-
-            if not file_path:
-                return  
-                             
-
-            with open(file_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-
-            playlist = data.get("playlist", [])
-            current_index = data.get("current_index", 0)
-            if not playlist:
-                QMessageBox.warning(self, "Playlist", "A playlist está vazia.")
-                return  
-
-            # limpa playlist atual
-            self.playlist_widget.clear()
-            self.playlist.clear()
             
-             # adiciona itens
-            for path in playlist:
-                if os.path.exists(path):
-                    item = QListWidgetItem(os.path.basename(path))
-                    item.setData(Qt.ItemDataRole.UserRole, path)
-                    self.playlist_widget.addItem(item)
-                    self.playlist.append(path)
-
-            # restaura índice
-            self.current_index = min(current_index, len(self.playlist) - 1)
-            # destaca item atual
-            self.highlight_current_item()
-
-            QMessageBox.information(
-            self,
-            "Playlist",
-            "Playlist carregada com sucesso!"
-        )
-
-        except Exception as e:
-            QMessageBox.critical(
-                self,
-                "Erro",
-            f"Erro ao carregar playlist:\n{e}"
-            )
-
-    def save_playlist(self):
-        """
-        Salva a playlist atual (ordem + arquivos) em disco,
-        pedindo um nome ao usuário.
-        """
-        try:
-            self.sync_playlist_from_widget()
-
-            # 🔹 pede o nome da playlist
-            name, ok = QInputDialog.getText(
-                self,
-                "Salvar playlist",
-                "Nome da playlist:"
-            )
-
-            if not ok or not name.strip():
-                return  # ← AGORA ESTE return É VÁLIDO
-
-            # 🔹 limpa o nome para usar como arquivo
-            safe_name = re.sub(r'[\\/:*?"<>|]', '_', name.strip())
-
-            data = {
-                "name": name,
-                "playlist": self.playlist,
-                "current_index": self.current_index
-            }
-
-            LICENSE_DIR.mkdir(parents=True, exist_ok=True)
-            playlist_file = LICENSE_DIR / f"{safe_name}.sp"
-
-            with open(playlist_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-
-            QMessageBox.information(
-                self,
-                "Playlist",
-                f"Playlist '{name}' salva com sucesso!"
-            )
-
-        except Exception as e:
-            QMessageBox.critical(
-                self,
-                "Erro",
-                f"Erro ao salvar playlist:\n{e}"
-            )
-
     def restore_to_main(self):
         """
         Volta o vídeo da janela externa para a janela principal,
@@ -612,27 +620,8 @@ class SuperPlayer(QMainWindow):
             self.sync_playlist_from_widget()
             QMessageBox.information(self, "Playlist", f"{len(files)} vídeo(s) adicionados à lista!")
 
-    def play_playlist(self):
-        self.sync_playlist_from_widget()
-        if not self.playlist: QMessageBox.warning(self, "Playlist vazia", "Nenhum vídeo foi adicionado."); return
-        self.current_index = 0; self.play_video_from_playlist()
-
-    def play_video_from_playlist(self):
-        if 0 <= self.current_index < len(self.playlist):
-            f = self.playlist[self.current_index]
-            self.player.setSource(QUrl.fromLocalFile(f)); self.player.play(); self.btn_play.setText("⏸️ Pausar"); self.highlight_current_item()
-        else:
-            QMessageBox.information(self, "Fim da lista", "Todos os vídeos foram reproduzidos."); self.current_index = 0
-
-    # ⬇️ ESTE MÉTODO TEM QUE ESTAR AQUI DENTRO ⬇️
-    def check_end_of_video(self, status):
-        if status == QMediaPlayer.MediaStatus.EndOfMedia:
-            self.current_index += 1
-        if self.current_index < len(self.playlist):
-            self.play_video_from_playlist()
-        else:
-            self.current_index = 0
-
+                        
+    
     def clear_playlist(self):
         self.playlist_widget.clear(); self.playlist.clear(); self.current_index = 0; QMessageBox.information(self, "Playlist", "Lista de reprodução limpa.")
 
@@ -735,8 +724,13 @@ class SuperPlayer(QMainWindow):
         else:
             self.btn_exit_corner.move(x, y)
             self.btn_exit_corner.show()
+
+    def closeEvent(self, event):
+        self.save_last_playlist()
+        super().closeEvent(event)
     
-                    
+
+                     
 
 # --- main ---
 if __name__ == "__main__":
