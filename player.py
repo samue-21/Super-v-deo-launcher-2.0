@@ -15,6 +15,8 @@ from pathlib import Path
 from PyQt6.QtGui import QPixmap, QIcon
 from PyQt6.QtCore import Qt
 
+
+
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QPushButton, QVBoxLayout, QFileDialog,
     QMessageBox, QHBoxLayout, QMenuBar, QApplication, QSplashScreen,
@@ -31,13 +33,20 @@ from PyQt6.QtGui import (
     QAction   
 )
 from PyQt6.QtCore import QSize
+from PyQt6.QtWidgets import QMenu
+from PyQt6.QtGui import QAction
+from PyQt6.QtCore import QEvent
+
+
 
 from PyQt6.QtWidgets import QInputDialog 
 from PyQt6.QtCore import (
     QUrl, Qt, QTimer, QPoint
 )
 
-from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+
+from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput, QVideoSink
+
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 
 # --- (licensing utilities same as before) ---
@@ -129,9 +138,12 @@ def show_splash(app):
     return splash
 
 class VideoWindow(QWidget):
-    def __init__(self, parent=None, exit_callback=None):
+        
+    def __init__(self, player, parent=None, exit_callback=None):
         super().__init__(parent)
+        self.player_ref = player
         self.exit_callback = exit_callback
+
 
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint |
@@ -141,11 +153,34 @@ class VideoWindow(QWidget):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setFocus()
        
-
-
+       
         self.video_widget = QVideoWidget(self)
+        # menu de contexto (clique direito no vídeo)
+        self.video_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.video_widget.customContextMenuRequested.connect(self.show_context_menu)
 
-        self.video_widget = QVideoWidget(self)
+
+    def show_context_menu(self, pos):
+        menu = QMenu(self)
+
+        loop_action = QAction("🔁 Modo Loop", self)
+        loop_action.setCheckable(True)
+        loop_action.setChecked(self.parent().loop_enabled)
+
+        loop_action.triggered.connect(self.toggle_loop)
+
+        menu.exec(self.video_widget.mapToGlobal(pos))
+
+    def toggle_loop(self):
+        parent = self.parent()
+        if parent and hasattr(parent, "loop_enabled"):
+            parent.loop_enabled = not parent.loop_enabled
+            status = "ATIVADO" if parent.loop_enabled else "DESATIVADO"
+            print(f"Modo Loop {status}")
+
+
+
+   
 
        
 
@@ -247,6 +282,26 @@ class SuperPlayer(QMainWindow):
          # carrega playlist salva após UI pronta
         QTimer.singleShot(0, self.load_playlist)
 
+        
+
+       
+       
+
+ 
+
+        # Fim do vídeo ao loop 
+        self.video_loop_enabled = False
+        self.player.setLoops(QMediaPlayer.Loops.Infinite)
+
+
+
+
+        # Event filter modo loop 
+        self.video_widget.installEventFilter(self)
+
+
+
+
 
 
         
@@ -274,7 +329,10 @@ class SuperPlayer(QMainWindow):
 
                
         # external fullscreen window
-        self.external_window = VideoWindow(exit_callback=self.restore_to_main)
+        self.external_window = VideoWindow(
+    self,  # <<< passa o SuperPlayer
+    exit_callback=self.restore_to_main
+)
         QApplication.instance().installEventFilter(self)
          # menu
         menu = self.menuBar()
@@ -283,6 +341,48 @@ class SuperPlayer(QMainWindow):
         act_license = QAction("Ativar licença...", self); act_license.triggered.connect(self.activate_license); file_menu.addAction(act_license)
         act_machine = QAction("Mostrar Machine ID", self); act_machine.triggered.connect(self.show_machine); file_menu.addAction(act_machine)
         act_close = QAction("Fechar Player", self); act_close.triggered.connect(self.close); file_menu.addAction(act_close)
+        
+
+        # 1️⃣ cria a barra de menu
+        menubar = self.menuBar()
+
+        # 2️⃣ cria o menu Arquivo
+        self.menuLoop = menubar.addMenu("Modo Loop")
+
+        # 3️⃣ cria a ação Vídeo Loop
+        self.action_video_loop = QAction("🔁 Vídeo Loop", self)
+        self.action_video_loop.setCheckable(True)
+        self.action_video_loop.triggered.connect(self.toggle_video_loop)
+        self.menuLoop.addAction(self.action_video_loop)
+
+
+        # 4️⃣ adiciona a ação ao menu
+        self.menuLoop.addAction(self.action_video_loop)
+
+        self.status = self.statusBar()
+
+        self.loop_indicator = QLabel("🟢 LOOP ATIVO")
+        self.loop_indicator.setStyleSheet("color: green; font-weight: bold;")
+        self.loop_indicator.hide()  # começa oculto
+
+        self.status.addPermanentWidget(self.loop_indicator)
+
+        #imagen no vídeo (miniatura)
+
+        self.playlist_widget.setViewMode(QListWidget.ViewMode.IconMode)
+        self.playlist_widget.setIconSize(QSize(120, 68))
+        self.playlist_widget.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.playlist_widget.setMovement(QListWidget.Movement.Static)
+        self.playlist_widget.setSpacing(10)
+
+        self.video_icon = QIcon("icons/video.png")  # ou qualquer ícone
+
+
+
+
+
+        
+        
 
               
 
@@ -294,12 +394,19 @@ class SuperPlayer(QMainWindow):
         cl.addWidget(self.video_widget)
 
         # slider
+        # slider
         self.slider = QSlider(Qt.Orientation.Horizontal)
-        self.slider.setRange(0,0)
+        self.slider.setRange(0, 0)
         self.slider.sliderMoved.connect(self.set_position)
+
         cl.addWidget(self.slider)
+
         self.player.positionChanged.connect(self.update_position)
         self.player.durationChanged.connect(self.update_duration)
+        self.slider.sliderPressed.connect(self.on_slider_pressed)
+        self.slider.sliderReleased.connect(self.on_slider_released)
+
+
 
         # controls: prev, play, stop, next, external fullscreen, toggle dock
         ctrl = QHBoxLayout()
@@ -440,13 +547,15 @@ class SuperPlayer(QMainWindow):
 
         for path in files:
             if path in self.playlist:
-                continue  # evita duplicados
+                continue
 
-            item = QListWidgetItem(os.path.basename(path))
-            item.setData(Qt.ItemDataRole.UserRole, path)
+        item = QListWidgetItem(self.video_icon, os.path.basename(path))
+        item.setSizeHint(QSize(140, 90))
+        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        item.setData(Qt.ItemDataRole.UserRole, path)
 
-            self.playlist_widget.addItem(item)
-            self.playlist.append(path)
+        self.playlist_widget.addItem(item)
+        self.playlist.append(path)
 
             # se ainda não estiver tocando nada, toca o primeiro
         if self.player.playbackState() != QMediaPlayer.PlaybackState.PlayingState:
@@ -680,6 +789,14 @@ class SuperPlayer(QMainWindow):
         if hasattr(self, "external_window") and self.external_window.isFullScreen():
             self.restore_to_main()
 
+    def enter_fullscreen(self):
+        if not hasattr(self, "video_window"):
+            self.video_window = VideoWindow(
+            self,
+            exit_callback=self.exit_fullscreen
+        )
+
+
        
     def exit_fullscreen(self):
         # ONLY exit fullscreen for the MAIN window (not the external window)
@@ -762,18 +879,106 @@ class SuperPlayer(QMainWindow):
         """
         self.btn_playlist.setChecked(
         self.playlist_dock.isVisible() or self.playlist_dock.isFloating()
-)
+
+    )
+        
+    def check_loop_position(self, position):
+        if not self.video_loop_enabled:
+            return
+
+        duration = self.player.duration()
+        if duration > 0 and position >= duration - 200:
+            self.player.setPosition(0)
+            self.player.play()
+
+
+    def on_media_status_changed(self, status):
+        print("STATUS:", status)
+        if status == QMediaPlayer.MediaStatus.EndOfMedia:
+            print("FIM DO VÍDEO")
+            if self.video_loop_enabled:
+                print("REINICIANDO LOOP")
+                self.player.setPosition(0)
+                self.player.play()
+
+
+
+        
+    def handle_media_status(self, status):
+        if status == QMediaPlayer.MediaStatus.EndOfMedia:
+            if self.loop_enabled:
+                self.player.setPosition(0)
+                self.player.play()
+
+
+    def toggle_video_loop(self):
+        if self.action_video_loop.isChecked():
+            self.player.setLoops(QMediaPlayer.Loops.Infinite)
+            self.loop_indicator.show()
+        else:
+            self.player.setLoops(QMediaPlayer.Loops.Once)
+            self.loop_indicator.hide()
+
+    def on_slider_pressed(self):
+        self.was_playing = (
+        self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+    )
+
+    # força decodificação sem tocar "de verdade"
+        self.player.setPlaybackRate(0.01)
+        self.player.play()
+
+
+    def set_position(self, position):
+        self.player.setPosition(position)
+
+
+    def on_slider_released(self):
+    # volta ao normal
+        self.player.setPlaybackRate(1.0)
+
+        if not self.was_playing:
+            self.player.pause()
+
+    
+
+
+    
+
+
+
+
+
+
+
+
+        
+                 
+
+    def eventFilter(self, obj, event):
+        if obj == self.video_widget and event.type() == QEvent.Type.ContextMenu:
+            self.show_context_menu(event.globalPos())
+            return True
+        return super().eventFilter(obj, event)
+
+
+
+
 
 
     # === UI helpers / seek / shortcuts ===
-    def update_position(self, pos):
-        self.slider.setValue(pos)
+    def update_position(self, position):
+        if not self.slider.isSliderDown():
+            self.slider.setValue(position)
 
-    def update_duration(self, dur):
-        self.slider.setRange(0, dur)
 
-    def set_position(self, pos):
-        self.player.setPosition(pos)
+    def update_duration(self, duration):
+        self.slider.setRange(0, duration)
+
+
+    def set_position(self, position):
+        self.player.setPosition(position)
+
 
     def jump(self, seconds):
         newpos = self.player.position() + seconds * 1000
