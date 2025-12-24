@@ -147,27 +147,7 @@ class VideoWindow(QWidget):
 
         self.video_widget = QVideoWidget(self)
 
-        self.btn_exit = QPushButton("⛔ Sair Tela Cheia", self)
-        self.btn_exit.setFixedSize(150, 36)
-        self.btn_exit.setStyleSheet("""
-            QPushButton {
-                background-color: rgba(200, 40, 40, 200);
-                color: white;
-                font-weight: bold;
-                border-radius: 6px;
-            }
-            QPushButton:hover {
-                background-color: rgba(255, 80, 80, 230);
-            }
-        """)
-
-        # ✅ CORREÇÃO AQUI
-        if callable(self.exit_callback):
-            self.btn_exit.clicked.connect(self.exit_callback)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.video_widget)
+       
 
     def show_on_screen(self, screen):
         self.setGeometry(screen.geometry())
@@ -212,11 +192,64 @@ class SuperPlayer(QMainWindow):
 
         self.video_widget = QVideoWidget()
         self.player.setVideoOutput(self.video_widget)
-        self.playlist_widget = QListWidget()
+
+        # ==============================
+        # PLAYLIST (UMA ÚNICA VEZ)
+        # ==============================
         self.playlist = []
         self.current_index = 0
 
-        self.load_last_playlist()
+        self.playlist_widget = QListWidget()
+        self.playlist_widget.setSelectionMode(
+        QListWidget.SelectionMode.SingleSelection
+    )
+
+        # ===============================
+        # DOCK DA PLAYLIST (com botão)
+        # ===============================
+        self.playlist_dock = QDockWidget("Playlist", self)
+        self.playlist_dock.setAllowedAreas(
+        Qt.DockWidgetArea.LeftDockWidgetArea |
+        Qt.DockWidgetArea.RightDockWidgetArea
+)
+
+       # container do dock
+        dock_container = QWidget()
+        dock_layout = QVBoxLayout(dock_container)
+        dock_layout.setContentsMargins(6, 6, 6, 6)
+        dock_layout.setSpacing(6)
+
+        # lista ocupa o espaço principal
+        dock_layout.addWidget(self.playlist_widget, stretch=1)
+
+        # botão limpar (RODAPÉ)
+        self.btn_clear_playlist = QPushButton("🧹 Limpar playlist")
+        self.btn_clear_playlist.setFixedHeight(34)
+        self.btn_clear_playlist.clicked.connect(self.clear_playlist)
+
+        dock_layout.addWidget(self.btn_clear_playlist, stretch=0)
+
+        # 🔥 ESSENCIAL
+        self.playlist_dock.setWidget(dock_container)
+
+        # adiciona dock à janela
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.playlist_dock)
+
+        # começa fechado
+        self.playlist_dock.hide()
+
+
+
+        self.addDockWidget(
+        Qt.DockWidgetArea.RightDockWidgetArea,
+        self.playlist_dock
+    )
+         # carrega playlist salva após UI pronta
+        QTimer.singleShot(0, self.load_playlist)
+
+
+
+        
 
                    
         
@@ -287,13 +320,14 @@ class SuperPlayer(QMainWindow):
 
         self.btn_external.clicked.connect(self.close_external_fullscreen)
 
+       
 
- 
+        # botão playlist
+        self.btn_playlist = QPushButton("📑 Playlist")
+        self.btn_playlist.setCheckable(True)
+        self.btn_playlist.clicked.connect(self.toggle_playlist_dock)
+        ctrl.addWidget(self.btn_playlist)
 
-        self.btn_toggle_dock = QPushButton("📑 Playlist")
-        self.btn_toggle_dock.setCheckable(True)
-        self.btn_toggle_dock.clicked.connect(self.toggle_playlist_dock)
-        ctrl.addWidget(self.btn_toggle_dock)
 
         cl.addLayout(ctrl)
         self.setCentralWidget(central)
@@ -303,31 +337,29 @@ class SuperPlayer(QMainWindow):
         # ---------------------------
         # BOTÃO: Sair Tela Cheia (CANTO SUPERIOR DIREITO - modo janela)
         # ---------------------------
-        self.btn_exit_corner = QPushButton("⛔ Sair Tela Cheia", self)
-        self.btn_exit_corner.setFixedSize(140, 32)
-        self.btn_exit_corner.setStyleSheet("""
-            QPushButton {
-                background-color: #c62828;
-                color: white;
-                font-weight: bold;
-                border-radius: 6px;
-            }
-            QPushButton:hover {
-                background-color: #ff5252;
-            }
-        """)
+    #    self.btn_exit_corner = QPushButton("⛔ Sair Tela Cheia", self)
+    #    self.btn_exit_corner.setFixedSize(140, 32)
+    #    self.btn_exit_corner.setStyleSheet("""
+    #        QPushButton {
+    #            background-color: #c62828;
+    #            color: white;
+    #            font-weight: bold;
+    #            border-radius: 6px;
+    #        }
+    #        QPushButton:hover {
+    #            background-color: #ff5252;
+    #        }
+    #    """)
         # IMPORTANT: button calls a method that only affects the main window fullscreen
-        self.btn_exit_corner.clicked.connect(self.exit_fullscreen)
+        #self.btn_exit_corner.clicked.connect(self.exit_fullscreen)
         # show the button in window mode; if you prefer hidden by default use hide()
-        self.btn_exit_corner.show()
+        #self.btn_exit_corner.show()
 
-        # Dock widget (recolhível, movível, flutuante)
-        self.playlist_dock = QDockWidget("Lista de Reprodução", self)
-        self.playlist_dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
+       
         # permitimos fechar, mover e flutuar
         self.playlist_dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetClosable | QDockWidget.DockWidgetFeature.DockWidgetMovable | QDockWidget.DockWidgetFeature.DockWidgetFloatable)
 
-        self.playlist_widget = QListWidget()
+       
         self.playlist_widget.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
         self.playlist_widget.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self.playlist_widget.setDefaultDropAction(Qt.DropAction.MoveAction)
@@ -343,10 +375,11 @@ class SuperPlayer(QMainWindow):
             self.playlist_widget.model().rowsInserted.connect(self.sync_playlist_from_widget)
             self.playlist_widget.model().rowsRemoved.connect(self.sync_playlist_from_widget)
 
-        self.playlist_dock.setWidget(self.playlist_widget)
+        
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.playlist_dock)
         self.playlist_dock.hide()
-        self.btn_toggle_dock.setChecked(False)
+        self.btn_playlist.setChecked(False)
+
 
         # shortcuts and monitors
         self.create_monitor_shortcuts()
@@ -392,38 +425,69 @@ class SuperPlayer(QMainWindow):
             self.setWindowTitle("Super Player — FREE")
 
     def open_file(self):
-        files, _ = QFileDialog.getOpenFileNames(
-        self,
-        "Selecionar vídeos",
-        "",
-        "Vídeos (*.mp4 *.avi *.mkv *.mov *.wmv)"
-    )
+        dialog = QFileDialog(self)
+        dialog.setWindowTitle("Selecionar vídeos")
+        dialog.setNameFilter("Vídeos (*.mp4 *.avi *.mkv *.mov *.wmv)")
+        dialog.setFileMode(QFileDialog.FileMode.ExistingFiles)
+
+        if not dialog.exec():
+            return
+
+        files = dialog.selectedFiles()
 
         if not files:
             return
 
-        self.player.stop()
+        for path in files:
+            if path in self.playlist:
+                continue  # evita duplicados
 
-        for file_path in files:
-            if not os.path.exists(file_path):
-                continue
+            item = QListWidgetItem(os.path.basename(path))
+            item.setData(Qt.ItemDataRole.UserRole, path)
 
-        # evita duplicação
-            if file_path in self.playlist:
-                continue
-
-            self.playlist.append(file_path)
-
-            item = QListWidgetItem(os.path.basename(file_path))
-            item.setData(Qt.ItemDataRole.UserRole, file_path)
             self.playlist_widget.addItem(item)
+            self.playlist.append(path)
 
-    # toca o primeiro arquivo adicionado
-            self.current_index = len(self.playlist) - len(files)
+            # se ainda não estiver tocando nada, toca o primeiro
+        if self.player.playbackState() != QMediaPlayer.PlaybackState.PlayingState:
+            self.current_index = 0
             self.play_video_from_playlist()
 
 
-            self.save_last_playlist()
+
+
+
+
+    def play_video(self, path: str):
+        if not path:
+            return
+
+        path = str(path)
+
+        if not os.path.exists(path):
+            QMessageBox.warning(self, "Erro", f"Arquivo não encontrado:\n{path}")
+            return
+
+        try:
+                # 🔥 RESET TOTAL
+            self.player.stop()
+
+                # 🔥 SEMPRE garantir o widget principal
+            self.player.setVideoOutput(None)
+            self.player.setVideoOutput(self.video_widget)
+
+                # 🔥 setSource isolado
+            url = QUrl.fromLocalFile(path)
+            self.player.setSource(url)
+
+                # 🔥 play isolado
+            self.player.play()
+
+            self.btn_play.setText("⏸️ Pausar")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Erro ao reproduzir", str(e))
+
 
 
     def save_last_playlist(self):
@@ -457,14 +521,11 @@ class SuperPlayer(QMainWindow):
     
 
     def load_playlist(self):
-        """
-        Carrega a playlist salva automaticamente ao iniciar o player.
-        """
-        if not PLAYLIST_FILE.exists():
+        if not LAST_PLAYLIST_FILE.exists():
             return
 
         try:
-            with open(PLAYLIST_FILE, "r", encoding="utf-8") as f:
+            with open(LAST_PLAYLIST_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
             self.playlist_widget.clear()
@@ -480,72 +541,99 @@ class SuperPlayer(QMainWindow):
             self.current_index = data.get("current_index", 0)
 
         except Exception as e:
-            print("Erro ao carregar playlist:", e)
+            print("Erro ao carregar playlist automática:", e)
+
+
 
     def load_last_playlist(self):
         try:
-
             if not LAST_PLAYLIST_FILE.exists():
+                print("ℹ️ Nenhuma playlist salva encontrada")
                 return
 
             with open(LAST_PLAYLIST_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
+                playlist = data.get("playlist", [])
+                index = data.get("current_index", 0)
+
+            if not playlist:
+                print("ℹ️ Playlist salva vazia")
+                return
+
+                # 🔥 LIMPA TUDO PRIMEIRO
             self.playlist.clear()
             self.playlist_widget.clear()
 
-            self.playlist = data.get("playlist", [])
-            self.current_index = data.get("current_index", 0)
+                # 🔥 ADICIONA ITEM POR ITEM NA UI
+            for path in playlist:
+                if os.path.exists(path):
+                    item = QListWidgetItem(os.path.basename(path))
+                    item.setData(Qt.ItemDataRole.UserRole, path)
+                    self.playlist_widget.addItem(item)
+                    self.playlist.append(path)
 
-        # popula visualmente a lista
-            self.playlist_widget.clear()
-            for path in self.playlist:
-                if self.playlist:
-                    self.highlight_current_item()
+                # 🔥 RESTAURA ÍNDICE
+            self.current_index = min(index, len(self.playlist) - 1)
 
-                    print("📂 Playlist restaurada automaticamente")
+                # 🔥 DESTACA ITEM ATUAL
+            if self.current_index >= 0:
+                self.playlist_widget.setCurrentRow(self.current_index)
+
+                print("✅ Playlist restaurada automaticamente")
 
         except Exception as e:
-            print("❌ Erro ao carregar playlist automática:", e)
-        except Exception as e:
-            print("Erro ao carregar última playlist:", e)
+                print("❌ Erro ao carregar playlist automática:", e)
+
 
     def on_playlist_double_click(self, item):
         path = item.data(Qt.ItemDataRole.UserRole)
-
         if not path:
             return
 
-        if path not in self.playlist:
-            QMessageBox.warning(self, "Erro", "Arquivo não encontrado na playlist.")
+        try:
+            self.current_index = self.playlist.index(path)
+        except ValueError:
             return
 
-        self.current_index = self.playlist.index(path)
-        self.play_video_from_playlist()
+        self.play_video(path)
+
 
 
 
     def play_video_from_playlist(self):
+            # segurança
         if not self.playlist:
             return
 
         if not (0 <= self.current_index < len(self.playlist)):
             return
 
-        f = self.playlist[self.current_index]
+            # ✅ DEFINE O PATH PRIMEIRO
+        path = self.playlist[self.current_index]
 
-        if not os.path.exists(f):
-            QMessageBox.warning(self, "Erro", f"Arquivo não encontrado:\n{f}")
+        if not path:
             return
 
-        try:
-            self.player.setVideoOutput(self.video_widget)
-            self.player.setSource(QUrl.fromLocalFile(f))
-            self.player.play()
-            self.btn_play.setText("⏸️ Pausar")
-            self.highlight_current_item()
-        except Exception as e:
-            print("Erro ao reproduzir:", e)
+        path = str(path)
+
+        if not os.path.exists(path):
+            QMessageBox.warning(
+            self,
+            "Erro",
+            f"Arquivo não encontrado:\n{path}"
+        )
+            return
+
+            # 🔥 garante que o player usa o widget principal
+        self.player.setVideoOutput(self.video_widget)
+
+            # ▶️ reproduz
+        self.player.setSource(QUrl.fromLocalFile(path))
+        self.player.play()
+
+        self.btn_play.setText("⏸️ Pausar")
+        self.highlight_current_item()
 
 
 
@@ -580,11 +668,7 @@ class SuperPlayer(QMainWindow):
             if hasattr(self, "btn_exit_corner"):
                 self.btn_exit_corner.show()
 
-        # Restaura dock se estava ativa
-            if hasattr(self, "playlist_dock") and hasattr(self, "btn_toggle_dock"):
-                if self.btn_toggle_dock.isChecked():
-                    self.playlist_dock.show()
-
+        
         except Exception as e:
             print("restore_to_main: erro inesperado:", e)
 
@@ -623,7 +707,10 @@ class SuperPlayer(QMainWindow):
                         
     
     def clear_playlist(self):
-        self.playlist_widget.clear(); self.playlist.clear(); self.current_index = 0; QMessageBox.information(self, "Playlist", "Lista de reprodução limpa.")
+        self.playlist_widget.clear()
+        self.playlist.clear()
+        self.current_index = 0
+
 
     def sync_playlist_from_widget(self, *args, **kwargs):
         new = []
@@ -660,16 +747,23 @@ class SuperPlayer(QMainWindow):
     # --- dock handlers ---
     def toggle_playlist_dock(self):
         if self.playlist_dock.isVisible():
-            self.playlist_dock.hide(); self.btn_toggle_dock.setChecked(False)
+            self.playlist_dock.hide()
+            self.btn_playlist.setChecked(False)
         else:
-            self.playlist_dock.show(); self.btn_toggle_dock.setChecked(True)
+            self.playlist_dock.show()
+            self.btn_playlist.setChecked(True)
+
+
 
     def on_dock_top_level_changed(self, top_level: bool):
         """
         called when dock is docked/undocked (floating).
         keep the toggle button state in sync so user can see it's open/floating.
         """
-        self.btn_toggle_dock.setChecked(self.playlist_dock.isVisible() or self.playlist_dock.isFloating())
+        self.btn_playlist.setChecked(
+        self.playlist_dock.isVisible() or self.playlist_dock.isFloating()
+)
+
 
     # === UI helpers / seek / shortcuts ===
     def update_position(self, pos):
@@ -700,7 +794,7 @@ class SuperPlayer(QMainWindow):
         self.player.setVideoOutput(self.external_window.video_widget)
         # hide dock while in external fullscreen (optional)
         self.playlist_dock.hide()
-        self.btn_toggle_dock.setChecked(False)
+        self.btn_playlist.setChecked(False)
         # hide the corner exit button when going to external fullscreen
         self.btn_exit_corner.hide()
         self.external_window.show_on_screen(screen)
@@ -710,21 +804,11 @@ class SuperPlayer(QMainWindow):
     # reposition exit button when the window resizes
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self.reposition_exit_button()
 
-    def reposition_exit_button(self):
+        if hasattr(self, "btn_exit_corner"):
+            self.reposition_exit_button()
 
-        # place the button at top-right corner inside the window chrome
-        margin = 10
-        x = self.width() - self.btn_exit_corner.width() - margin
-        y = margin
-        # if window is in fullscreen mode, keep it hidden (we only want it in window mode)
-        if self.isFullScreen() or (self.external_window.isFullScreen()):
-            self.btn_exit_corner.hide()
-        else:
-            self.btn_exit_corner.move(x, y)
-            self.btn_exit_corner.show()
-
+    
     def closeEvent(self, event):
         self.save_last_playlist()
         super().closeEvent(event)
